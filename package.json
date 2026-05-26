@@ -1,0 +1,28 @@
+{
+  "name": "@provenant/bridge",
+  "version": "0.1.0",
+  "description": "Local bridge for Provenant. Reads your Claude Code transcripts and runs analysis against your existing Pro/Max subscription via the claude CLI. Listens on 127.0.0.1; provenanthq.com talks to it from the browser.",
+  "license": "Proprietary",
+  "type": "module",
+  "bin": {
+    "provenant": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/cli.js serve",
+    "prepare": "tsc",
+    "prepublishOnly": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5.4"
+  }
+}
