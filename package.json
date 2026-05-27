@@ -4,6 +4,24 @@
   "description": "Local bridge for Provenant. Reads your Claude Code transcripts and runs analysis against your existing Pro/Max subscription via the claude CLI. Listens on 127.0.0.1; provenanthq.com talks to it from the browser.",
   "license": "Proprietary",
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://provenanthq.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AnalogMutations/provenant-bridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AnalogMutations/provenant-bridge/issues"
+  },
+  "keywords": [
+    "provenant",
+    "claude",
+    "claude-code",
+    "hiring",
+    "fingerprint"
+  ],
   "bin": {
     "provenant": "dist/cli.js"
   },

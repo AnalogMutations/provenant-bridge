@@ -12,7 +12,13 @@ The bridge listens on loopback only.
 ## Install
 
 ```bash
-npm install -g github:AnalogMutations/provenant-bridge
+npm install -g @provenant/bridge
+```
+
+Or run once without installing:
+
+```bash
+npx @provenant/bridge serve
 ```
 
 Requires [Node.js 18+](https://nodejs.org) and
