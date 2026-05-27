@@ -1,6 +1,6 @@
 {
   "name": "@provenant/bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local bridge for Provenant. Reads your Claude Code transcripts and runs analysis against your existing Pro/Max subscription via the claude CLI. Listens on 127.0.0.1; provenanthq.com talks to it from the browser.",
   "license": "Proprietary",
   "type": "module",

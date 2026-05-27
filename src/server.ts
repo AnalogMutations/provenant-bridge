@@ -5,48 +5,62 @@
  *   POST /match         -> runs the pipeline, returns MatchReport
  *   GET  /projects      -> lists local projects with stats
  *
- * CORS allows the production marketing site and the localhost dev server.
- * Adjust ALLOWED_ORIGINS if you fork.
+ * Security posture:
+ *   - Loopback bind (127.0.0.1) by default
+ *   - Origin allowlist (default: provenanthq.com only; --dev adds loopback)
+ *   - Non-allowed Origins are rejected with 403 (not just CORS-suppressed)
+ *   - POST endpoints require Content-Type: application/json
+ *   - Optional bearer token via --token
+ *   - /health is intentionally open so the website can detect us
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import os from "node:os";
-import path from "node:path";
 
 import { DEFAULT_ROOT, loadProjects } from "./extract.js";
 import { haveClaudeCli } from "./llm.js";
 import { runMatch } from "./pipeline.js";
 import { getRole, ROLES } from "./roles.js";
 
-const VERSION = "0.1.0";
-const ALLOWED_ORIGINS = new Set<string>([
+const VERSION = "0.1.1";
+
+// Production origins. Default-on, always allowed.
+const PRODUCTION_ORIGINS = new Set<string>([
   "https://provenanthq.com",
   "https://www.provenanthq.com",
-  "https://provenant.onrender.com",
 ]);
-// Any localhost / 127.0.0.1 origin is also allowed regardless of port —
-// the caller can only reach us if they're on the same machine anyway.
+
+// http://localhost:* and http://127.0.0.1:* (any port). Only allowed when
+// the daemon is started with --dev. We never include them by default so
+// a random Electron app, sketchy local web server, or installed CLI tool
+// can't reach the bridge from a browser context on the same machine.
 const LOOPBACK_HOST_RE = /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/;
 
 export type ServeOptions = {
   port?: number;
   host?: string;
   root?: string;
-  /** Bearer token required on every non-health request. If unset, no auth. */
+  /** Bearer token required on /match and /projects. /health stays open. */
   token?: string | null;
-  /** Optional extra origin to allow (e.g. a staging preview). */
+  /** Additional allowed origin (e.g. a Render preview URL or a staging host). */
   extraOrigin?: string | null;
+  /** When true, also allow http://localhost:* and http://127.0.0.1:* origins. */
+  dev?: boolean;
 };
 
 export function startServer(opts: ServeOptions = {}): { stop: () => Promise<void>; url: string } {
   const port = opts.port ?? 7765;
   const host = opts.host ?? "127.0.0.1";
-  const allowed = new Set(ALLOWED_ORIGINS);
+  const allowed = new Set(PRODUCTION_ORIGINS);
   if (opts.extraOrigin) allowed.add(opts.extraOrigin);
 
   const server = createServer(async (req, res) => {
     const origin = req.headers.origin;
-    setCors(res, origin, allowed);
+
+    // Always set CORS headers so allowed origins can read responses. Origin
+    // rejection (for cross-origin authorization, not just CORS-display) is
+    // enforced separately per endpoint.
+    setCors(res, origin, allowed, opts.dev === true);
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
@@ -62,11 +76,14 @@ export function startServer(opts: ServeOptions = {}): { stop: () => Promise<void
         return;
       }
       if (url.pathname === "/projects" && req.method === "GET") {
+        if (!checkOrigin(req, res, allowed, opts.dev === true)) return;
         if (!checkAuth(req, res, opts.token)) return;
         await handleProjects(req, res, url, opts);
         return;
       }
       if (url.pathname === "/match" && req.method === "POST") {
+        if (!checkOrigin(req, res, allowed, opts.dev === true)) return;
+        if (!checkContentType(req, res)) return;
         if (!checkAuth(req, res, opts.token)) return;
         await handleMatch(req, res, opts);
         return;
@@ -89,15 +106,58 @@ export function startServer(opts: ServeOptions = {}): { stop: () => Promise<void
   };
 }
 
-function setCors(res: ServerResponse, origin: string | undefined, allowed: Set<string>) {
-  // Browser sends Origin on cross-origin requests; we mirror it back only if
-  // it's on the allowlist (or any loopback origin, regardless of port).
-  if (origin && (allowed.has(origin) || LOOPBACK_HOST_RE.test(origin))) {
+function isAllowedOrigin(origin: string, allowed: Set<string>, dev: boolean): boolean {
+  if (allowed.has(origin)) return true;
+  if (dev && LOOPBACK_HOST_RE.test(origin)) return true;
+  return false;
+}
+
+function setCors(
+  res: ServerResponse,
+  origin: string | undefined,
+  allowed: Set<string>,
+  dev: boolean
+) {
+  if (origin && isAllowedOrigin(origin, allowed, dev)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
   }
   res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "content-type,authorization");
+}
+
+/**
+ * Server-side origin authorization. The Origin header is set by the browser
+ * (not the page), so a malicious site cannot claim Origin: provenanthq.com.
+ * Non-browser callers (curl, scripts, Claude Code itself) omit Origin and
+ * are allowed — they're already on the candidate's machine and the daemon
+ * is loopback-only.
+ */
+function checkOrigin(
+  req: IncomingMessage,
+  res: ServerResponse,
+  allowed: Set<string>,
+  dev: boolean
+): boolean {
+  const origin = req.headers.origin;
+  if (!origin) return true; // no browser context
+  if (isAllowedOrigin(origin, allowed, dev)) return true;
+  writeJson(res, 403, {
+    ok: false,
+    error: `origin not allowed: ${origin}`,
+  });
+  return false;
+}
+
+function checkContentType(req: IncomingMessage, res: ServerResponse): boolean {
+  const raw = req.headers["content-type"] ?? "";
+  const mime = String(raw).toLowerCase().split(";")[0].trim();
+  if (mime === "application/json") return true;
+  writeJson(res, 415, {
+    ok: false,
+    error: "Content-Type must be application/json",
+  });
+  return false;
 }
 
 function checkAuth(req: IncomingMessage, res: ServerResponse, token: string | null | undefined): boolean {
@@ -117,6 +177,7 @@ async function handleHealth(res: ServerResponse, opts: ServeOptions): Promise<vo
     transcripts_root: opts.root ?? DEFAULT_ROOT,
     home: os.homedir(),
     auth_required: !!opts.token,
+    dev: opts.dev === true,
     roles: Object.keys(ROLES),
   });
 }

@@ -2,20 +2,21 @@
 /**
  * provenant — local bridge for provenanthq.com.
  *
- *   provenant serve          start the daemon (default port 7765)
- *   provenant projects       list local Claude Code projects
- *   provenant match --role privacy-eng --jd jd.txt
+ *   provenant serve              start the daemon (default 127.0.0.1:7765)
+ *   provenant projects           list local Claude Code projects
+ *   provenant match --role <id> --jd <path-or-text>
  */
 
 import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
-import os from "node:os";
 
 import { DEFAULT_ROOT, loadProjects } from "./extract.js";
 import { haveClaudeCli } from "./llm.js";
 import { runMatch } from "./pipeline.js";
 import { getRole, ROLES } from "./roles.js";
 import { startServer } from "./server.js";
+
+const VERSION = "0.1.1";
 
 type Args = {
   command: string | null;
@@ -49,10 +50,11 @@ function parseArgs(argv: string[]): Args {
 }
 
 function usage(): string {
-  return `provenant — local bridge for provenanthq.com
+  return `provenant — local bridge for provenanthq.com (v${VERSION})
 
 Usage:
-  provenant serve [--port 7765] [--root ~/.claude/projects] [--token <token>]
+  provenant serve [--port 7765] [--root ~/.claude/projects]
+                  [--token | --token <value>] [--dev] [--extra-origin <url>]
   provenant projects [--since 30d] [--limit 50] [--root ~/.claude/projects]
   provenant match --role <role-id> --jd <path-or-text> [--since 30d] [--limit 12]
   provenant --help
@@ -62,6 +64,8 @@ Roles:
 
 Examples:
   provenant serve
+  provenant serve --token                       # generate & print a token
+  provenant serve --dev                         # also allow localhost origins
   provenant projects --since 30d --limit 20
   provenant match --role engineering-generalist --jd ./role.md --since 90d`;
 }
@@ -70,12 +74,20 @@ async function cmdServe(args: Args): Promise<number> {
   const port = parseInt(String(args.flags.port ?? "7765"), 10);
   const host = String(args.flags.host ?? "127.0.0.1");
   const root = String(args.flags.root ?? DEFAULT_ROOT);
-  const generate = args.flags["generate-token"] === true || args.flags["with-token"] === true;
-  const token = generate
-    ? randomBytes(18).toString("base64url")
-    : args.flags.token
-    ? String(args.flags.token)
-    : null;
+  const dev = args.flags.dev === true;
+  const extraOriginRaw = args.flags["extra-origin"];
+  const extraOrigin = typeof extraOriginRaw === "string" ? extraOriginRaw : null;
+
+  // --token (no value)  →  generate a fresh token
+  // --token <value>     →  use the provided token
+  // (omitted)           →  no auth required
+  const tokenFlag = args.flags.token;
+  const token =
+    tokenFlag === true
+      ? "ptk_" + randomBytes(18).toString("base64url")
+      : typeof tokenFlag === "string"
+      ? tokenFlag
+      : null;
 
   if (!(await haveClaudeCli())) {
     console.warn(
@@ -84,17 +96,33 @@ async function cmdServe(args: Args): Promise<number> {
     );
   }
 
-  const { url } = startServer({ port, host, root, token });
-  console.log(`provenant-bridge ${packageVersion()} listening on ${url}`);
-  console.log(`transcripts root: ${root}`);
+  const { url } = startServer({ port, host, root, token, dev, extraOrigin });
+
+  // Pretty intro
+  console.log("");
+  console.log(`  provenant-bridge ${VERSION}  ·  listening on ${url}`);
+  console.log(`  transcripts root: ${root}`);
+  console.log(
+    `  CORS:             ${
+      dev
+        ? "provenanthq.com + loopback (dev mode)"
+        : "provenanthq.com only"
+    }${extraOrigin ? ` + ${extraOrigin}` : ""}`
+  );
   if (token) {
-    console.log(`auth: Bearer ${token}`);
+    console.log(`  auth:             Bearer ${token}`);
+    console.log("");
+    console.log(`  click to open with token saved:`);
+    console.log(
+      `    https://provenanthq.com/match/?bridge_token=${encodeURIComponent(token)}`
+    );
   } else {
-    console.log("auth: none (loopback only)");
+    console.log(`  auth:             none (loopback bind)`);
   }
   console.log("");
-  console.log("→ Visit https://provenanthq.com/demo and click ‘Match against my history'.");
-  console.log("→ Stop with Ctrl-C.");
+  console.log("  → Visit https://provenanthq.com/match/ to run a match.");
+  console.log("  → Stop with Ctrl-C.");
+  console.log("");
 
   // Keep alive
   await new Promise<void>(() => {});
@@ -160,10 +188,6 @@ function parseSince(s: string | boolean | undefined): Date | null {
   return Number.isFinite(t) ? new Date(t) : null;
 }
 
-function packageVersion(): string {
-  return "0.1.0";
-}
-
 async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2));
   if (!args.command || args.command === "--help" || args.command === "-h" || args.command === "help") {
@@ -171,7 +195,7 @@ async function main(): Promise<number> {
     return 0;
   }
   if (args.command === "--version" || args.command === "-v" || args.command === "version") {
-    console.log(packageVersion());
+    console.log(VERSION);
     return 0;
   }
   switch (args.command) {
