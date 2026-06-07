@@ -113,6 +113,39 @@ ${evidence}
   "role_map": [
     {"req": "competency label from the role spec", "coverage": 0}
   ],
+  "ai_skill": {
+    "overall": 0,
+    "subskills": [
+      {
+        "name": "verification & skepticism | debugging persistence | course correction | calibrated disagreement",
+        "score": 0,
+        "confidence": "high|moderate|emerging",
+        "basis": "one abstracted line on what in the evidence supports this score — patterns, never verbatim",
+        "sources": ["project-display-name-from-EVIDENCE", "..."]
+      }
+    ]
+  },
+  "prompting": {
+    "overall": 0,
+    "facets": [
+      {
+        "name": "context provisioning | intent specificity | task decomposition | constraint & output specification | context management | iteration efficiency",
+        "score": 0,
+        "confidence": "high|moderate|emerging",
+        "basis": "one abstracted line on what in the evidence supports this score — patterns, never verbatim",
+        "sources": ["project-display-name-from-EVIDENCE", "..."]
+      }
+    ]
+  },
+  "disagreement_episodes": [
+    {
+      "summary": "abstracted description of a moment the candidate pushed back on the model's recommended algorithm, code, or approach (what was proposed, what the candidate did instead) — never verbatim, no PII",
+      "direction": "correct|incorrect",
+      "vindication_signal": "model_conceded|tests_passed|approach_persisted|reverted|unclear",
+      "confidence": "high|moderate|emerging",
+      "sources": ["project-display-name-from-EVIDENCE"]
+    }
+  ],
   "summary": {
     "verdict": "e.g. 'Strong fit · advance to onsite' | 'Moderate fit · technical screen' | 'Limited fit · evidence too thin'",
     "headline": "one paragraph of nuanced, evidence-anchored recommendation; abstracted, no verbatim quotes, no PII"
@@ -122,7 +155,30 @@ ${evidence}
 
 Rules:
 - role_map MUST cover every competency in the role spec; coverage is your honest estimate from the evidence
-- confidence_counts MUST equal the actual counts across strengths + gaps
-- Reply with the fenced JSON only, no prose before or after
-- All scores are 0–100 integers`;
+- confidence_counts MUST equal the actual counts across strengths + gaps (do NOT count ai_skill subskills, prompting facets, or disagreement_episodes here)
+- All scores are 0–100 integers
+
+ai_skill (role-agnostic — the candidate's JUDGMENT and rigor working with the model, independent of the role spec):
+- Include exactly the four subskills named in the schema (verification & skepticism, debugging persistence, course correction, calibrated disagreement), each scored 0–100. "overall" is your holistic 0–100 read of the candidate's judgment operating an AI coding agent — not a mechanical average
+- Score observable BEHAVIOUR only: whether they verify model output instead of accepting it, how they recover when the agent goes wrong, whether they re-steer vs abandon, and whether they correctly overrule the model. NEVER infer intelligence, IQ, or innate ability
+- If the evidence is too thin to judge a subskill, set its confidence to "emerging" and score conservatively
+
+prompting (role-agnostic — the candidate's CRAFT in communicating with and driving the model):
+- Include exactly the six facets named in the schema (context provisioning, intent specificity, task decomposition, constraint & output specification, context management, iteration efficiency), each scored 0–100. "overall" is your holistic 0–100 read of how effectively the candidate gets the model to do what they need — not a mechanical average
+- Judge how well the candidate COMMUNICATES INTENT and DRIVES OUTCOMES: do they give the model the right context, files, and constraints up front; are their asks specific and unambiguous with a clear definition of done; do they size requests sensibly; do they set output/format constraints and say what NOT to do; do they keep long sessions grounded and re-anchor when context drifts; and do they reach working results through precise, targeted corrections rather than thrash and rework
+- This is NOT prompt-engineering trivia. Do NOT reward magic phrases, politeness, role-play preambles ("you are an expert…"), or any incantation. Reward ONLY clear communication of intent and efficient, well-steered outcomes
+- iteration efficiency is about PRECISION of communication, not raw turn count. A candidate tackling a harder problem will take more turns; judge whether turns are purposeful and corrections are targeted, not whether there are few of them
+- If the evidence is too thin to judge a facet, set its confidence to "emerging" and score conservatively
+
+disagreement_episodes (high-value signal — be rigorous, not generous):
+- An episode is a moment where the candidate pushed back on a model-recommended approach AND the transcript shows how it RESOLVED. Capture the resolution, not just the disagreement
+- direction "correct" REQUIRES a positive vindication signal present in the evidence: model_conceded (the model explicitly agreed the candidate was right), tests_passed (the candidate's approach fixed the error or made tests/build pass), or approach_persisted (the candidate's alternative survived to the end of the session without being reverted)
+- direction "incorrect" when the model's original approach was right — e.g. the candidate's change was reverted (vindication_signal "reverted") or the candidate ended up adopting the model's suggestion. Score these honestly; do not hide them
+- Do NOT invent episodes. If none are clearly visible, return an empty array. Few or zero episodes is expected and is NOT penalised — absence of disagreement is not evidence of skill or of compliance
+- Each episode MUST cite real project display-name(s) from EVIDENCE and stay fully abstracted
+
+Even-weighting (applies to all sections above):
+- Weigh ALL projects in EVIDENCE evenly. Do NOT over-index on the most recent project or the one listed first; recency and position are not relevance. Distribute strengths, subskill and facet bases, and episodes across the full set of projects wherever the evidence supports it
+
+- Reply with the fenced JSON only, no prose before or after`;
 }
