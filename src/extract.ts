@@ -212,6 +212,37 @@ export function shortText(text: string, cap = TURN_CHAR_CAP): string {
   return `${text.slice(0, headLen)}\n\n[…truncated ${text.length - cap} chars…]\n\n${text.slice(-tailLen)}`;
 }
 
+/**
+ * Best-effort redaction of high-confidence secret shapes before evidence is
+ * sent to the model. Defence-in-depth, not a guarantee: a candidate's
+ * transcripts can contain pasted keys, and even with the prompt's no-verbatim
+ * rules we don't want raw credentials in the blob at all. Patterns are kept
+ * specific enough to avoid mangling ordinary prose.
+ */
+const SECRET_RULES: { re: RegExp; repl: string }[] = [
+  { re: /-----BEGIN[ A-Z]*PRIVATE KEY-----[\s\S]*?-----END[ A-Z]*PRIVATE KEY-----/g, repl: "[redacted:private-key]" },
+  { re: /\bsk-ant-[A-Za-z0-9_-]{20,}/g, repl: "[redacted:anthropic-key]" },
+  { re: /\bsk-[A-Za-z0-9_-]{20,}/g, repl: "[redacted:api-key]" },
+  { re: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}/g, repl: "[redacted:github-token]" },
+  { re: /\bgithub_pat_[A-Za-z0-9_]{20,}/g, repl: "[redacted:github-token]" },
+  { re: /\bA(?:KIA|SIA)[0-9A-Z]{16}\b/g, repl: "[redacted:aws-key-id]" },
+  { re: /\bAIza[0-9A-Za-z_-]{35}\b/g, repl: "[redacted:google-key]" },
+  { re: /\bxox[baprs]-[A-Za-z0-9-]{10,}/g, repl: "[redacted:slack-token]" },
+  { re: /\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,}/g, repl: "[redacted:stripe-key]" },
+  { re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, repl: "[redacted:jwt]" },
+  { re: /\bBearer\s+[A-Za-z0-9._~+/-]{20,}=*/g, repl: "Bearer [redacted:token]" },
+  {
+    re: /\b(api[_-]?key|secret|password|passwd|access[_-]?token|client[_-]?secret)(\s*[:=]\s*)['"]?[A-Za-z0-9_\-./+=]{8,}['"]?/gi,
+    repl: "$1$2[redacted:credential]",
+  },
+];
+
+export function redactSecrets(text: string): string {
+  let out = text;
+  for (const { re, repl } of SECRET_RULES) out = out.replace(re, repl);
+  return out;
+}
+
 export function buildEvidenceBlob(
   projects: Project[],
   opts: {
@@ -252,11 +283,11 @@ export function buildEvidenceBlob(
       ``,
     ];
     for (const t of userSlice) {
-      lines.push(`[${t.timestamp.slice(0, 10)}] USER: ${shortText(t.text, perTurnCap)}`);
+      lines.push(`[${t.timestamp.slice(0, 10)}] USER: ${shortText(redactSecrets(t.text), perTurnCap)}`);
       lines.push("");
     }
     for (const t of asstSlice) {
-      lines.push(`[${t.timestamp.slice(0, 10)}] ASSISTANT: ${shortText(t.text, perTurnCap)}`);
+      lines.push(`[${t.timestamp.slice(0, 10)}] ASSISTANT: ${shortText(redactSecrets(t.text), perTurnCap)}`);
       lines.push("");
     }
     const block = lines.join("\n");

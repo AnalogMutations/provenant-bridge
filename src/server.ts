@@ -15,14 +15,18 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import os from "node:os";
+import { createRequire } from "node:module";
 
 import { DEFAULT_ROOT, loadProjects } from "./extract.js";
 import { haveClaudeCli } from "./llm.js";
 import { runMatch } from "./pipeline.js";
 import { getRole, ROLES } from "./roles.js";
 
-const VERSION = "0.1.1";
+// Read the version from package.json at runtime so /health can't drift from the
+// published package. require() (not a static JSON import) keeps the file out of
+// tsc's rootDir.
+const require = createRequire(import.meta.url);
+const { version: VERSION } = require("../package.json") as { version: string };
 
 // Production origins. Default-on, always allowed.
 const PRODUCTION_ORIGINS = new Set<string>([
@@ -61,6 +65,13 @@ export function startServer(opts: ServeOptions = {}): { stop: () => Promise<void
     // rejection (for cross-origin authorization, not just CORS-display) is
     // enforced separately per endpoint.
     setCors(res, origin, allowed, opts.dev === true);
+
+    // Reject any request whose Host header is not loopback. Legitimate callers
+    // (the website, curl, Claude Code) all reach us at 127.0.0.1:<port>, so this
+    // is transparent to them but defeats DNS rebinding: a page on evil.com that
+    // re-points its DNS to 127.0.0.1 still sends Host: evil.com and is refused,
+    // even on same-origin GETs that carry no Origin header.
+    if (!checkHost(req, res)) return;
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
@@ -149,6 +160,26 @@ function checkOrigin(
   return false;
 }
 
+/**
+ * Host-header allowlist. The Host header reflects the name the client used to
+ * reach us; legitimate loopback traffic is always 127.0.0.1 / localhost / ::1.
+ * Refusing anything else defeats DNS rebinding, where a browser is tricked into
+ * resolving an attacker domain to 127.0.0.1 — the Host stays the attacker domain
+ * and is rejected here, even when no Origin header is present.
+ */
+function checkHost(req: IncomingMessage, res: ServerResponse): boolean {
+  const host = req.headers.host;
+  const hostname = (host ?? "")
+    .replace(/:\d+$/, "")
+    .replace(/^\[|\]$/g, "")
+    .toLowerCase();
+  if (hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1") {
+    return true;
+  }
+  writeJson(res, 403, { ok: false, error: `host not allowed: ${host ?? "(none)"}` });
+  return false;
+}
+
 function checkContentType(req: IncomingMessage, res: ServerResponse): boolean {
   const raw = req.headers["content-type"] ?? "";
   const mime = String(raw).toLowerCase().split(";")[0].trim();
@@ -169,13 +200,13 @@ function checkAuth(req: IncomingMessage, res: ServerResponse, token: string | nu
 }
 
 async function handleHealth(res: ServerResponse, opts: ServeOptions): Promise<void> {
+  // Intentionally minimal: no home dir or transcripts_root path, which would
+  // leak the username / local layout to a same-origin (rebound) or local caller.
   writeJson(res, 200, {
     ok: true,
     service: "provenant-bridge",
     version: VERSION,
     claude_cli: await haveClaudeCli(),
-    transcripts_root: opts.root ?? DEFAULT_ROOT,
-    home: os.homedir(),
     auth_required: !!opts.token,
     dev: opts.dev === true,
     roles: Object.keys(ROLES),
